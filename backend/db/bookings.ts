@@ -58,9 +58,11 @@ export async function getAvailableSlots(params: {
   if (params.fromDate) {
     values.push(params.fromDate);
     where.push(`slots.slot_date >= $${values.length}::date`);
-  } else {
+  } else if (!params.includeBooked) {
+    // Only filter by current date for customers/public view
     where.push(`slots.slot_date >= CURRENT_DATE`);
   }
+  // For vendors viewing their own slots, don't filter by date
 
   const sql = `
     SELECT DISTINCT
@@ -72,7 +74,7 @@ export async function getAvailableSlots(params: {
       slots.is_available AS "isAvailable"
     FROM availability_slots slots
     ${params.serviceId ? "JOIN services ON services.vendor_id = slots.vendor_id" : ""}
-    WHERE ${where.join(" AND ")}
+    ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
     ORDER BY slots.slot_date ASC, slots.start_time ASC
     LIMIT 100
   `;
