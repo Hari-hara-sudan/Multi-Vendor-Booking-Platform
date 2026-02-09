@@ -8,6 +8,20 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
+    proxy: {
+      "/graphql": {
+        target: "http://localhost:5000",
+        changeOrigin: true,
+      },
+      "/auth": {
+        target: "http://localhost:5000",
+        changeOrigin: true,
+      },
+      "/api": {
+        target: "http://localhost:5000",
+        changeOrigin: true,
+      },
+    },
     hmr: {
       overlay: false,
     },

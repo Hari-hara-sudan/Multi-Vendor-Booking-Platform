@@ -1,9 +1,11 @@
 import { motion } from "framer-motion";
 import { ArrowRight, Star, ChevronRight, Zap, Shield, Clock } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { useEffect } from "react";
 import PublicLayout from "@/components/layouts/PublicLayout";
 import ServiceCard from "@/components/ServiceCard";
 import { serviceCategories, featuredServices, testimonials } from "@/data/mockData";
+import { useAuth } from "@/auth/AuthContext";
 
 const fadeUp = {
   initial: { opacity: 0, y: 30 },
@@ -13,6 +15,31 @@ const fadeUp = {
 };
 
 export default function Index() {
+  const { user, loading } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    // Redirect logged-in users to their dashboard
+    if (!loading && user) {
+      switch (user.role) {
+        case "customer":
+          navigate("/customer/dashboard");
+          break;
+        case "vendor":
+          navigate("/vendor/dashboard");
+          break;
+        case "admin":
+          navigate("/admin/dashboard");
+          break;
+      }
+    }
+  }, [user, loading, navigate]);
+
+  // Show nothing while checking auth or redirecting
+  if (loading || user) {
+    return null;
+  }
+
   return (
     <PublicLayout>
       {/* Hero */}

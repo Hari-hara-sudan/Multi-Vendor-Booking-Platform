@@ -1,8 +1,58 @@
 import { motion } from "framer-motion";
-import { User, Mail, Phone, MapPin, Camera } from "lucide-react";
+import { User, Mail, Camera } from "lucide-react";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
+import { useAuth } from "@/auth/AuthContext";
+import { useEffect, useMemo, useState } from "react";
+import { useToast } from "@/hooks/use-toast";
+
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    credentials: "include",
+  });
+  const data = (await res.json().catch(() => ({}))) as any;
+  if (!res.ok) {
+    const message = typeof data?.error === "string" ? data.error : `Request failed (${res.status})`;
+    throw new Error(message);
+  }
+  return data as T;
+}
 
 export default function CustomerProfile() {
+  const auth = useAuth();
+  const { toast } = useToast();
+  const [name, setName] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const email = auth.user?.email ?? "";
+  const currentName = auth.user?.name ?? "";
+  const displayName = useMemo(() => (currentName?.trim() ? currentName : email), [currentName, email]);
+
+  useEffect(() => {
+    setName(currentName ?? "");
+  }, [currentName]);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const res = await fetchJson<{ ok: true; user: { name: string | null } }>("/auth/profile", {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      });
+      await auth.refresh();
+      toast({ title: "Profile updated", description: `Saved as ${res.user.name ?? "(no name)"}` });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update profile";
+      toast({ title: "Update failed", description: message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <DashboardLayout role="customer">
       <div className="max-w-2xl space-y-6">
@@ -17,34 +67,46 @@ export default function CustomerProfile() {
               </button>
             </div>
             <div>
-              <h3 className="font-display font-semibold text-foreground">Sarah Mitchell</h3>
-              <p className="text-sm text-muted-foreground">Member since Jan 2025</p>
+              <h3 className="font-display font-semibold text-foreground">{displayName || "Customer"}</h3>
+              <p className="text-sm text-muted-foreground">Account: {email || "—"}</p>
             </div>
           </div>
 
           <div className="space-y-4">
-            {[
-              { label: "Full Name", value: "Sarah Mitchell", icon: User },
-              { label: "Email", value: "sarah@example.com", icon: Mail },
-              { label: "Phone", value: "+1 (555) 123-4567", icon: Phone },
-              { label: "Location", value: "New York, NY", icon: MapPin },
-            ].map((field) => (
-              <div key={field.label}>
-                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">{field.label}</label>
-                <div className="relative">
-                  <field.icon size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <input
-                    type="text"
-                    defaultValue={field.value}
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-background border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Full Name</label>
+              <div className="relative">
+                <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-background border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  placeholder="Your name"
+                />
               </div>
-            ))}
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Email</label>
+              <div className="relative">
+                <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={email}
+                  readOnly
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-background/60 border border-border text-muted-foreground text-sm"
+                />
+              </div>
+            </div>
           </div>
 
-          <button className="mt-6 px-6 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
-            Save Changes
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="mt-6 px-6 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-60"
+          >
+            {saving ? "Saving…" : "Save Changes"}
           </button>
         </motion.div>
       </div>

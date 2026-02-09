@@ -7,12 +7,14 @@ import {
   Menu, X, ChevronLeft, LogOut
 } from "lucide-react";
 import RoleSwitcher from "@/components/RoleSwitcher";
+import { useAuth } from "@/auth/AuthContext";
 
 type Role = "customer" | "vendor" | "admin";
 
 const sidebarMenus: Record<Role, { label: string; path: string; icon: React.ElementType }[]> = {
   customer: [
     { label: "Dashboard", path: "/customer/dashboard", icon: LayoutDashboard },
+    { label: "Services", path: "/customer/services", icon: Store },
     { label: "My Bookings", path: "/customer/bookings", icon: Calendar },
     { label: "Profile", path: "/customer/profile", icon: User },
     { label: "Notifications", path: "/customer/notifications", icon: Bell },
@@ -45,7 +47,13 @@ export default function DashboardLayout({ children, role }: { children: React.Re
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const auth = useAuth();
   const menuItems = sidebarMenus[role];
+
+  async function handleLogout() {
+    await auth.logout();
+    navigate("/login", { replace: true });
+  }
 
   return (
     <div className="min-h-screen flex bg-background">
@@ -99,13 +107,22 @@ export default function DashboardLayout({ children, role }: { children: React.Re
         </nav>
 
         <div className="p-4 border-t border-sidebar-border">
-          <button
-            onClick={() => navigate("/")}
-            className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-sidebar-foreground hover:text-primary transition-colors w-full ${collapsed ? "justify-center" : ""}`}
-          >
-            <LogOut size={18} />
-            {!collapsed && <span>Back to Home</span>}
-          </button>
+          <div className="space-y-2">
+            <button
+              onClick={() => navigate("/")}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-sidebar-foreground hover:text-primary transition-colors w-full ${collapsed ? "justify-center" : ""}`}
+            >
+              <LogOut size={18} />
+              {!collapsed && <span>Back to Home</span>}
+            </button>
+            <button
+              onClick={handleLogout}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-sidebar-foreground hover:text-primary transition-colors w-full ${collapsed ? "justify-center" : ""}`}
+            >
+              <LogOut size={18} />
+              {!collapsed && <span>Logout</span>}
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -174,6 +191,14 @@ export default function DashboardLayout({ children, role }: { children: React.Re
             </h2>
           </div>
           <div className="flex items-center gap-4">
+            {auth.user && (
+              <div className="hidden sm:block text-sm text-muted-foreground">
+                Welcome{" "}
+                <span className="text-foreground font-medium">
+                  {auth.user.name?.trim() ? auth.user.name : auth.user.email}
+                </span>
+              </div>
+            )}
             <RoleSwitcher />
             <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
               <User size={16} className="text-muted-foreground" />
