@@ -37,6 +37,7 @@ export default function ServiceDetails() {
   const [booking, setBooking] = useState(false);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [showReviews, setShowReviews] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string>("");
 
   const serviceId = id ?? "1";
 
@@ -175,6 +176,23 @@ export default function ServiceDetails() {
     return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   };
 
+  // Get unique sorted dates from available slots
+  const availableDates = [...new Set(availableSlots.map(s => s.slotDate))].sort(
+    (a, b) => new Date(a).getTime() - new Date(b).getTime()
+  );
+
+  // Auto-select first available date when slots load
+  useEffect(() => {
+    if (availableDates.length > 0 && !selectedDate) {
+      setSelectedDate(availableDates[0]);
+    }
+  }, [availableSlots]);
+
+  // Filter slots by selected date
+  const filteredSlots = selectedDate
+    ? availableSlots.filter(s => s.slotDate === selectedDate)
+    : availableSlots;
+
   const selectedSlotDetails = selectedSlot
     ? availableSlots.find((s) => s.id === selectedSlot)
     : null;
@@ -252,52 +270,60 @@ export default function ServiceDetails() {
               <h3 className="font-display font-semibold text-foreground mb-4 flex items-center gap-2">
                 <Calendar size={18} className="text-primary" /> Available Time Slots
               </h3>
+
+              {/* Date Picker */}
               {loadingSlots ? (
                 <div className="text-sm text-muted-foreground">Loading available slots...</div>
-              ) : availableSlots.length === 0 ? (
+              ) : availableDates.length === 0 ? (
                 <div className="text-sm text-muted-foreground">No available slots at the moment. Please check back later.</div>
               ) : (
-                <div className="space-y-4">
-                  {Object.entries(
-                    availableSlots.reduce((groups: Record<string, AvailabilitySlot[]>, slot) => {
-                      const date = slot.slotDate;
-                      if (!groups[date]) groups[date] = [];
-                      groups[date].push(slot);
-                      return groups;
-                    }, {})
-                  )
-                  .sort(([a], [b]) => new Date(a).getTime() - new Date(b).getTime())
-                  .map(([date, dateSlots]) => (
-                    <div key={date} className="space-y-2">
-                      <p className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                        <Calendar size={14} className="text-primary" />
-                        {formatSlotDate(date)}
-                      </p>
-                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                        {dateSlots
-                          .sort((a, b) => a.startTime.localeCompare(b.startTime))
-                          .map((slot) => (
-                            <button
-                              key={slot.id}
-                              onClick={() => slot.isAvailable && setSelectedSlot(slot.id)}
-                              disabled={!slot.isAvailable}
-                              className={`px-3 py-2 rounded-xl text-xs font-medium transition-all ${
-                                !slot.isAvailable
-                                  ? "bg-red-500/10 text-red-400 border border-red-500/20 cursor-not-allowed opacity-60 line-through"
-                                  : selectedSlot === slot.id
-                                  ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25"
-                                  : "bg-secondary text-foreground hover:bg-secondary/80 border border-border"
-                              }`}
-                              title={!slot.isAvailable ? "This slot is already booked" : "Click to select this slot"}
-                            >
-                              {formatSlotTime(slot)}
-                              {!slot.isAvailable && <span className="block text-[10px] no-underline" style={{ textDecoration: 'none' }}>Booked</span>}
-                            </button>
-                          ))}
-                      </div>
+                <>
+                  <div className="mb-4">
+                    <label className="text-xs font-medium text-muted-foreground mb-2 block">Select Date</label>
+                    <div className="flex flex-wrap gap-2">
+                      {availableDates.map((date) => (
+                        <button
+                          key={date}
+                          onClick={() => { setSelectedDate(date); setSelectedSlot(null); }}
+                          className={`px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+                            selectedDate === date
+                              ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25"
+                              : "bg-secondary text-foreground hover:bg-secondary/80 border border-border"
+                          }`}
+                        >
+                          {formatSlotDate(date)}
+                        </button>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </div>
+
+                  {filteredSlots.length === 0 ? (
+                    <div className="text-sm text-muted-foreground">No available slots for this date. Try another date.</div>
+                  ) : (
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                      {filteredSlots
+                        .sort((a, b) => a.startTime.localeCompare(b.startTime))
+                        .map((slot) => (
+                          <button
+                            key={slot.id}
+                            onClick={() => slot.isAvailable && setSelectedSlot(slot.id)}
+                            disabled={!slot.isAvailable}
+                            className={`px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+                              !slot.isAvailable
+                                ? "bg-red-500/10 text-red-400 border border-red-500/20 cursor-not-allowed opacity-60 line-through"
+                                : selectedSlot === slot.id
+                                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25"
+                                : "bg-secondary text-foreground hover:bg-secondary/80 border border-border"
+                            }`}
+                            title={!slot.isAvailable ? "This slot is already booked" : "Click to select this slot"}
+                          >
+                            {formatSlotTime(slot)}
+                            {!slot.isAvailable && <span className="block text-[10px] no-underline" style={{ textDecoration: 'none' }}>Booked</span>}
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                </>
               )}
             </motion.div>
           </div>

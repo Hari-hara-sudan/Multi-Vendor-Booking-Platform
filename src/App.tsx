@@ -32,6 +32,7 @@ import VendorEarnings from "./pages/vendor/Earnings";
 import VendorProfile from "./pages/vendor/Profile";
 import VendorNotifications from "./pages/vendor/Notifications";
 
+import AdminLogin from "./pages/admin/Login";
 import AdminDashboard from "./pages/admin/Dashboard";
 import AdminVendors from "./pages/admin/Vendors";
 import AdminCategories from "./pages/admin/Categories";
@@ -54,6 +55,7 @@ const App = () => (
               <Route path="/services" element={<Services />} />
               <Route path="/service/:id" element={<ServiceDetails />} />
               <Route path="/login" element={<Login />} />
+              <Route path="/admin/login" element={<AdminLogin />} />
               <Route path="/select-role" element={<SelectRole />} />
 
               <Route element={<RequireAuth allowedRoles={["customer"]} />}>

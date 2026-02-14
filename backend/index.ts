@@ -38,11 +38,23 @@ import {
   getVendorStats,
   getVendorMonthlyEarnings,
   getVendorRatingDistribution,
+  getVendorTransactions,
+  getVendorPendingPayout,
+  getVendorMostBookedServices,
   getAdminStats,
   getAdminUserGrowth,
   getAdminBookingsTrend,
   getCustomerStats,
 } from "./db/analytics";
+import {
+  getNotifications,
+  getUnreadCount,
+  markAsRead,
+  markAllAsRead,
+  createNotification,
+  notifyVendorForBooking,
+  notifyCustomerForBooking,
+} from "./db/notifications";
 
 const PORT = Number(process.env.PORT ?? 4000);
 
@@ -229,7 +241,7 @@ async function start() {
         res.status(400).json({ error: "Email and password are required" });
         return;
       }
-      if (!isAuthRole(role) || role === "admin") {
+      if (!isAuthRole(role)) {
         res.status(400).json({ error: "Invalid role" });
         return;
       }
@@ -391,6 +403,17 @@ async function start() {
       
       const serviceId = req.query.serviceId ? Number(req.query.serviceId) : undefined;
       const fromDate = typeof req.query.fromDate === "string" ? req.query.fromDate : undefined;
+
+      // When filtering by serviceId, also resolve the vendor so we include their generic slots
+      if (serviceId && !vendorId) {
+        const svcPool = getPool();
+        const svcRes = await svcPool.query<{ vendor_id: number }>(
+          'SELECT vendor_id FROM services WHERE id = $1', [serviceId]
+        );
+        if (svcRes.rows[0]) {
+          vendorId = svcRes.rows[0].vendor_id;
+        }
+      }
 
       const slots = await getAvailableSlots({ vendorId, serviceId, fromDate, includeBooked });
       console.log("[GET /api/availability] Slots returned:", slots.length);
@@ -700,6 +723,13 @@ async function start() {
 
         console.log("[POST /api/bookings] Booking created:", booking.id, "Payment:", payment.id, "Status:", payment.payment_status);
 
+        // Notify vendor about new booking
+        try {
+          const svcResult = await pool.query(`SELECT title FROM services WHERE id = $1`, [serviceId]);
+          const svcTitle = svcResult.rows[0]?.title ?? 'a service';
+          await notifyVendorForBooking(booking.id, `New booking #${booking.id} received for "${svcTitle}".`);
+        } catch (_) { /* non-critical */ }
+
         res.status(201).json({ 
           ok: true, 
           booking, 
@@ -747,6 +777,17 @@ async function start() {
         userId: user.id,
         userRole: user.role,
       });
+
+      // Notify the other party about the status change
+      try {
+        const statusLabel = status.charAt(0).toUpperCase() + status.slice(1);
+        if (user.role === 'vendor') {
+          await notifyCustomerForBooking(bookingId, `Your booking #${bookingId} has been ${statusLabel.toLowerCase()} by the vendor.`);
+        } else {
+          await notifyVendorForBooking(bookingId, `Booking #${bookingId} status changed to "${statusLabel}" by the customer.`);
+        }
+      } catch (_) { /* non-critical */ }
+
       res.status(200).json({ ok: true, booking });
     } catch (err: any) {
       res.status(400).json({ error: err?.message ?? "Failed to update booking status" });
@@ -779,6 +820,12 @@ async function start() {
         newSlotId: Number(newSlotId),
         userId: user.id,
       });
+
+      // Notify vendor about reschedule
+      try {
+        await notifyVendorForBooking(bookingId, `Booking #${bookingId} has been rescheduled by the customer.`);
+      } catch (_) { /* non-critical */ }
+
       res.status(200).json({ ok: true, booking });
     } catch (err: any) {
       res.status(400).json({ error: err?.message ?? "Failed to reschedule booking" });
@@ -893,6 +940,10 @@ async function start() {
           `UPDATE bookings SET status = 'accepted' WHERE id = $1`,
           [bookingId]
         );
+        // Notify vendor about successful payment
+        try {
+          await notifyVendorForBooking(bookingId, `Payment of ₹${result.rows[0].amount} received for booking #${bookingId}.`);
+        } catch (_) { /* non-critical */ }
       } else if (paymentStatus === 'failed') {
         await pool.query(
           `UPDATE bookings SET status = 'cancelled' WHERE id = $1`,
@@ -1062,6 +1113,14 @@ async function start() {
 
       console.log("[POST /api/reviews] Review created:", review.id, "for booking:", bookingId);
 
+      // Notify vendor about the new review
+      try {
+        const pool = getPool();
+        const svcResult = await pool.query(`SELECT title FROM services WHERE id = $1`, [serviceId]);
+        const svcTitle = svcResult.rows[0]?.title ?? 'your service';
+        await notifyVendorForBooking(Number(bookingId), `New ${rating}-star review on "${svcTitle}".`);
+      } catch (_) { /* non-critical */ }
+
       res.status(201).json({ ok: true, review });
     } catch (err: any) {
       console.error("[POST /api/reviews] Error:", err);
@@ -1132,6 +1191,101 @@ async function start() {
     } catch (err: any) {
       console.error("[GET /api/bookings/:bookingId/can-review] Error:", err);
       res.status(400).json({ error: err?.message ?? "Failed to check review status" });
+    }
+  });
+
+  // ---- Admin Vendor Approval API ----
+
+  // List all vendors with their user info and verification status
+  app.get("/api/admin/vendors", async (req, res) => {
+    const user = getAuthUserFromRequest(req);
+    if (!user || user.role !== "admin") {
+      res.status(403).json({ error: "Forbidden: admins only" });
+      return;
+    }
+
+    try {
+      const pool = getPool();
+      const { rows } = await pool.query(
+        `SELECT v.id, v.business_name, v.is_verified, v.created_at,
+                u.name AS owner_name, u.email AS owner_email
+         FROM vendors v
+         JOIN users u ON u.id = v.user_id
+         ORDER BY v.created_at DESC`
+      );
+      res.status(200).json({
+        ok: true,
+        vendors: rows.map((r: any) => ({
+          id: r.id,
+          businessName: r.business_name,
+          isVerified: r.is_verified,
+          createdAt: r.created_at,
+          ownerName: r.owner_name,
+          ownerEmail: r.owner_email,
+        })),
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? "Failed to fetch vendors" });
+    }
+  });
+
+  // Approve a vendor
+  app.patch("/api/admin/vendors/:vendorId/approve", async (req, res) => {
+    const user = getAuthUserFromRequest(req);
+    if (!user || user.role !== "admin") {
+      res.status(403).json({ error: "Forbidden: admins only" });
+      return;
+    }
+
+    const vendorId = Number(req.params.vendorId);
+    if (isNaN(vendorId)) { res.status(400).json({ error: "Invalid vendor ID" }); return; }
+
+    try {
+      const pool = getPool();
+      const { rows } = await pool.query(
+        `UPDATE vendors SET is_verified = true WHERE id = $1 RETURNING id, user_id, business_name`,
+        [vendorId]
+      );
+      if (rows.length === 0) { res.status(404).json({ error: "Vendor not found" }); return; }
+
+      // Notify the vendor
+      try {
+        await createNotification(rows[0].user_id, `Your vendor account "${rows[0].business_name}" has been approved! You can now receive bookings.`);
+      } catch (_) {}
+
+      res.status(200).json({ ok: true });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? "Failed to approve vendor" });
+    }
+  });
+
+  // Reject a vendor
+  app.patch("/api/admin/vendors/:vendorId/reject", async (req, res) => {
+    const user = getAuthUserFromRequest(req);
+    if (!user || user.role !== "admin") {
+      res.status(403).json({ error: "Forbidden: admins only" });
+      return;
+    }
+
+    const vendorId = Number(req.params.vendorId);
+    if (isNaN(vendorId)) { res.status(400).json({ error: "Invalid vendor ID" }); return; }
+
+    try {
+      const pool = getPool();
+      const { rows } = await pool.query(
+        `UPDATE vendors SET is_verified = false WHERE id = $1 RETURNING id, user_id, business_name`,
+        [vendorId]
+      );
+      if (rows.length === 0) { res.status(404).json({ error: "Vendor not found" }); return; }
+
+      // Notify the vendor
+      try {
+        await createNotification(rows[0].user_id, `Your vendor account "${rows[0].business_name}" application was not approved. Please contact support for details.`);
+      } catch (_) {}
+
+      res.status(200).json({ ok: true });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? "Failed to reject vendor" });
     }
   });
 
@@ -1514,18 +1668,52 @@ async function start() {
     }
 
     try {
-      const stats = await getVendorStats(user.id);
-      const monthlyEarnings = await getVendorMonthlyEarnings(user.id, 6);
-      const ratingDistribution = await getVendorRatingDistribution(user.id);
+      const vendorId = await getVendorIdByUserId(user.id);
+      const stats = await getVendorStats(vendorId);
+      const monthlyEarnings = await getVendorMonthlyEarnings(vendorId, 6);
+      const ratingDistribution = await getVendorRatingDistribution(vendorId);
+      const mostBookedServices = await getVendorMostBookedServices(vendorId, 5);
 
       res.status(200).json({
         ok: true,
         stats,
         monthlyEarnings,
         ratingDistribution,
+        mostBookedServices,
       });
     } catch (err: any) {
       res.status(400).json({ error: err?.message ?? "Failed to fetch analytics" });
+    }
+  });
+
+  // Vendor earnings (stats + chart + transactions)
+  app.get("/api/analytics/vendor/earnings", async (req, res) => {
+    const user = getAuthUserFromRequest(req);
+    if (!user || user.role !== "vendor") {
+      res.status(403).json({ error: "Forbidden: vendors only" });
+      return;
+    }
+
+    try {
+      const vendorId = await getVendorIdByUserId(user.id);
+      const stats = await getVendorStats(vendorId);
+      const monthlyEarnings = await getVendorMonthlyEarnings(vendorId, 6);
+      const transactions = await getVendorTransactions(vendorId, 20);
+      const pendingPayout = await getVendorPendingPayout(vendorId);
+
+      res.status(200).json({
+        ok: true,
+        stats: {
+          totalEarnings: stats.totalEarnings,
+          thisMonthEarnings: stats.thisMonthEarnings,
+          earningsTrend: stats.earningsTrend,
+          pendingPayout,
+        },
+        monthlyEarnings,
+        transactions,
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? "Failed to fetch earnings" });
     }
   });
 
@@ -1570,6 +1758,48 @@ async function start() {
       });
     } catch (err: any) {
       res.status(400).json({ error: err?.message ?? "Failed to fetch analytics" });
+    }
+  });
+
+  // ---- Notifications API ----
+
+  // Get notifications for the logged-in user
+  app.get("/api/notifications", async (req, res) => {
+    const user = getAuthUserFromRequest(req);
+    if (!user) { res.status(401).json({ error: "Unauthorized" }); return; }
+
+    try {
+      const notifications = await getNotifications(user.id);
+      const unreadCount = await getUnreadCount(user.id);
+      res.status(200).json({ ok: true, notifications, unreadCount });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? "Failed to fetch notifications" });
+    }
+  });
+
+  // Mark a single notification as read
+  app.patch("/api/notifications/:id/read", async (req, res) => {
+    const user = getAuthUserFromRequest(req);
+    if (!user) { res.status(401).json({ error: "Unauthorized" }); return; }
+
+    try {
+      await markAsRead(Number(req.params.id), user.id);
+      res.status(200).json({ ok: true });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? "Failed to mark as read" });
+    }
+  });
+
+  // Mark all notifications as read
+  app.patch("/api/notifications/read-all", async (req, res) => {
+    const user = getAuthUserFromRequest(req);
+    if (!user) { res.status(401).json({ error: "Unauthorized" }); return; }
+
+    try {
+      await markAllAsRead(user.id);
+      res.status(200).json({ ok: true });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? "Failed to mark all as read" });
     }
   });
 

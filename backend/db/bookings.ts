@@ -55,7 +55,8 @@ export async function getAvailableSlots(params: {
 
   if (params.serviceId) {
     values.push(params.serviceId);
-    where.push(`slots.service_id = $${values.length}`);
+    // Match slots linked to this service OR generic vendor slots (service_id IS NULL)
+    where.push(`(slots.service_id = $${values.length} OR slots.service_id IS NULL)`);
   }
 
   // Always filter by date - show only current and future slots
